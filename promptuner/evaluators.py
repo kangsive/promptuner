@@ -6,7 +6,7 @@ the quality of generated text against reference outputs.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from difflib import SequenceMatcher
 import re
@@ -82,6 +82,34 @@ class AdherenceEvaluator(Evaluator):
             scores.append(score)
         
         return float(np.mean(scores))
+    
+    def run_detailed(self, inputs: List[str], references: List[str], 
+                    generated: List[str]) -> Tuple[float, List[float]]:
+        """
+        Evaluate adherence with detailed individual scores.
+        
+        Args:
+            inputs: List of input prompts (not used in basic adherence).
+            references: List of reference outputs.
+            generated: List of generated outputs.
+            
+        Returns:
+            Tuple of (overall_score, individual_scores).
+        """
+        if len(references) != len(generated):
+            raise ValueError(f"Number of references ({len(references)}) "
+                           f"must match number of generated ({len(generated)})")
+        
+        if not references:
+            return 0.0, []
+        
+        individual_scores = []
+        for ref, gen in zip(references, generated):
+            score = self._evaluate_pair(ref, gen)
+            individual_scores.append(score)
+        
+        overall_score = float(np.mean(individual_scores))
+        return overall_score, individual_scores
     
     def _evaluate_pair(self, reference: str, generated: str) -> float:
         """
@@ -235,6 +263,34 @@ class BLEUEvaluator(Evaluator):
             scores.append(score)
         
         return float(np.mean(scores))
+    
+    def run_detailed(self, inputs: List[str], references: List[str], 
+                    generated: List[str]) -> Tuple[float, List[float]]:
+        """
+        Evaluate using BLEU-like metric with detailed individual scores.
+        
+        Args:
+            inputs: List of input prompts (not used).
+            references: List of reference outputs.
+            generated: List of generated outputs.
+            
+        Returns:
+            Tuple of (overall_score, individual_scores).
+        """
+        if len(references) != len(generated):
+            raise ValueError(f"Number of references ({len(references)}) "
+                           f"must match number of generated ({len(generated)})")
+        
+        if not references:
+            return 0.0, []
+        
+        individual_scores = []
+        for ref, gen in zip(references, generated):
+            score = self._bleu_score(ref, gen)
+            individual_scores.append(score)
+        
+        overall_score = float(np.mean(individual_scores))
+        return overall_score, individual_scores
     
     def _bleu_score(self, reference: str, generated: str) -> float:
         """Calculate BLEU-like score for a single pair."""

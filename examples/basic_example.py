@@ -14,6 +14,7 @@ import logging
 from promptuner import PromptOptimizer, AdherenceEvaluator
 from promptuner.datasets import InMemoryDataset
 from promptuner.generators import TransformerGenerator
+from promptuner.analysts import RuleBasedAnalyst
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -55,6 +56,10 @@ def main():
     print("🔍 Setting up evaluator...")
     evaluator = AdherenceEvaluator()
     
+    # Create analyst
+    print("🔬 Setting up analyst...")
+    analyst = RuleBasedAnalyst(low_score_threshold=0.4)
+    
     # Create generator (using a mock for this example)
     print("🤖 Setting up generator...")
     
@@ -81,6 +86,7 @@ def main():
         generator=generator,
         evaluator=evaluator,
         dataset=dataset,
+        analyst=analyst,
         task_description="Answer questions accurately and concisely",
         generation_size=3,
         max_depth=3,

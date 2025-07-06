@@ -46,6 +46,96 @@ class Evaluator(ABC):
             Evaluation score (higher is better).
         """
         pass
+    
+    def run_detailed(self, inputs: List[str], references: List[str], 
+                    generated: List[str]) -> Tuple[float, List[float]]:
+        """
+        Evaluate the quality of generated outputs with detailed scores.
+        
+        Args:
+            inputs: List of input prompts.
+            references: List of reference/expected outputs.
+            generated: List of generated outputs to evaluate.
+            
+        Returns:
+            Tuple of (overall_score, individual_scores).
+        """
+        overall_score = self.run(inputs, references, generated)
+        # Default implementation: return overall score for each sample
+        individual_scores = [overall_score] * len(inputs)
+        return overall_score, individual_scores
+
+
+class Analyst(ABC):
+    """Abstract base class for analyzing evaluation results."""
+    
+    @abstractmethod
+    def run(self, inputs: List[str], references: List[str], 
+            generated: List[str], scores: List[float], 
+            overall_score: float, current_prompt: str,
+            ancestor_verified_hypotheses: Optional[List[str]] = None,
+            ancestor_false_hypotheses: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Analyze evaluation results to provide feedback for prompt improvement.
+        
+        Args:
+            inputs: List of input prompts.
+            references: List of reference/expected outputs.
+            generated: List of generated outputs.
+            scores: List of individual sample scores.
+            overall_score: Overall evaluation score.
+            current_prompt: The prompt that generated these outputs.
+            ancestor_verified_hypotheses: List of hypotheses verified by ancestors.
+            ancestor_false_hypotheses: List of hypotheses falsified by ancestors.
+            
+        Returns:
+            Analysis results containing:
+            - 'summary': Overall summary of the evaluation
+            - 'low_score_analysis': Analysis of low-scoring samples
+            - 'patterns': Patterns identified in problematic data
+            - 'improvement_suggestions': Specific suggestions for improvement
+            - 'hypothesis': Hypothesis about why performance is low
+            - 'new_hypothesis': New hypothesis for children to verify
+        """
+        pass
+    
+    def update_parent_hypotheses(self, parent_node: 'PromptNode', child_nodes: List['PromptNode'],
+                                low_score_threshold: float = 0.3) -> None:
+        """
+        Update parent node's verified and false hypotheses based on children's performance.
+        
+        Args:
+            parent_node: Parent node whose hypotheses should be updated.
+            child_nodes: List of child nodes that tested the parent's hypothesis.
+            low_score_threshold: Threshold for identifying low-scoring samples.
+        """
+        if not parent_node.new_hypothesis or not child_nodes:
+            return
+        
+        # Check if children improved on parent's key issues (low-scoring samples)
+        parent_low_score_count = sum(1 for score in parent_node.individual_scores 
+                                   if score < low_score_threshold)
+        
+        # Find the best performing child
+        best_child = max(child_nodes, key=lambda x: x.score if x.score is not None else -float('inf'))
+        
+        if best_child.score is None or parent_node.score is None:
+            return
+        
+        # Count low-scoring samples for the best child
+        best_child_low_score_count = sum(1 for score in best_child.individual_scores 
+                                       if score < low_score_threshold)
+        
+        # Determine if hypothesis should be verified or falsified
+        if (best_child.score > parent_node.score and 
+            best_child_low_score_count < parent_low_score_count):
+            # Hypothesis is verified - children improved on key issues
+            if parent_node.new_hypothesis not in parent_node.verified_hypothesis:
+                parent_node.verified_hypothesis.append(parent_node.new_hypothesis)
+        else:
+            # Hypothesis is false - children did not improve on key issues
+            if parent_node.new_hypothesis not in parent_node.false_hypothesis:
+                parent_node.false_hypothesis.append(parent_node.new_hypothesis)
 
 
 class Dataset(ABC):

@@ -19,11 +19,21 @@ I want to build a prompt optimizer where it takes:
 - A dataset (base class) containing inputs and reference outputs (Optional).
   - Base class: should have datasize, batchsize, shuffle and batch_iter method. Support csv, json, jsonl.
   
+- An analyst class (base class) to analyze the prompt and provide feedback.
+  - takes evaluation results, analyze on evaluation result to undetstand why the current prompt failed or get low evaluation score, by focusing on low score samples (input, output, reference output, scores), then return analyze result including summary and analyze result of evaluation including hypothsis why we get this score, what kind of samples are lowering the score, the pattern of this kind of data and how to improve the prompt, (A hypothesis of Why it is, what cause this, how to address this). This analysis offer reference and context for the prompt optimizer to generate better prompt.
+  
+  - **Hypothesis Tracking**: The analysis is guided by a hypothesis system. The analyst considers `verified_hypothesis` and `false_hypothesis` from ancestor prompts to generate more accurate feedback and a `new_hypothesis`.
+  - The `new_hypothesis` is a specific, testable idea for how to improve the prompt (e.g., "Adding examples will improve performance on complex inputs").
+  - The analyst is also responsible for updating the parent prompt's hypotheses (`verified_hypothesis` or `false_hypothesis`) based on the performance of its children, effectively allowing the system to learn what works and what doesn't.
+  - The output of the analysis (summary, patterns, suggestions, new hypothesis) provides context for the optimizer to generate better prompts.
+  
 And then output the best prompt with best score after optimization.
 
 The prompt optimizer takes all above components to initialize and run. Should have a run method to run the optimization.
-  - It should have prompt generation control, recording a prompt family tree with initial prompt as root. Every round of optimization should generate a few new prompts as new generation. (Expanding the tree), then we do a DFS search, pick the first candidate, generate outputs (on dataset inputs), evaluate to get the score, if the score is better than the current best score, we update the best score with current candidate and continue the search deep down on this node. Otherwise, we backtrack and try the next candidate.
-  That means, only the first candidate in new generation which have a better score than father prompt will be selected to generate next generation of prompts and expend the prompts family tree on this track.
+  - It should have prompt generation control, recording a prompt family tree with initial prompt as root. The tree nodes should store the prompt, score, analysis results, and hypothesis data (`new_hypothesis`, `verified_hypothesis`, `false_hypothesis`).
+  - **Hypothesis-Driven Search**: The prompt generation process is guided by the hypothesis system. When generating new prompt candidates, it considers the `new_hypothesis` from the current node, as well as the `verified_hypothesis` and `false_hypothesis` from all ancestor nodes. This ensures that new prompts build on successful strategies and avoid failed ones.
+  - It uses a DFS search. It picks the first candidate, evaluates its score, and if the score is better than its parent, it continues the search down that path. Otherwise, it backtracks.
+  - When backtracking, the optimizer updates the parent node's hypotheses based on the performance of the just-evaluated children, solidifying the learned knowledge.
 
   - Should have method to get the best prompt (with best score) in the tree.
   - Should have generation size control, to control the number of prompts to generate in each round of optimization. If no candidate in a generation have a better score than father prompt, we should trackback to father prompt and continue in the next candidate in previous generation.

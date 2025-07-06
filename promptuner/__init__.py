@@ -1,29 +1,45 @@
 """
-PromptTuner: A prompt optimization tool using DFS search on prompt family trees.
+Promptuner: A powerful prompt optimization framework.
 
-This package provides a framework for optimizing prompts through iterative
-generation and evaluation using a tree-based search approach.
+This package provides tools for optimizing prompts using tree-based search
+and evaluation feedback.
 """
+
+from .base import Generator, Evaluator, Dataset, Analyst
+from .generators import OpenAIGenerator, TransformerGenerator
+from .evaluators import AdherenceEvaluator, BLEUEvaluator
+from .analysts import LLMAnalyst, RuleBasedAnalyst
+from .datasets import CSVDataset, JSONDataset, JSONLDataset, InMemoryDataset
+from .optimizer import PromptOptimizer, PromptNode
 
 __version__ = "0.1.0"
 
-from .optimizer import PromptOptimizer
-from .base import Generator, Evaluator, Dataset
-from .generators import OpenAIGenerator, TransformerGenerator
-from .evaluators import AdherenceEvaluator, BLEUEvaluator
-from .datasets import CSVDataset, JSONDataset, JSONLDataset, InMemoryDataset
-
 __all__ = [
-    "PromptOptimizer",
+    # Base classes
     "Generator",
     "Evaluator", 
     "Dataset",
+    "Analyst",
+    
+    # Generators
     "OpenAIGenerator",
     "TransformerGenerator",
+    
+    # Evaluators
     "AdherenceEvaluator",
     "BLEUEvaluator",
+    
+    # Analysts
+    "LLMAnalyst",
+    "RuleBasedAnalyst",
+    
+    # Datasets
     "CSVDataset",
-    "JSONDataset",
+    "JSONDataset", 
     "JSONLDataset",
     "InMemoryDataset",
+    
+    # Optimizer
+    "PromptOptimizer",
+    "PromptNode",
 ] 
