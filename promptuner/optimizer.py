@@ -8,9 +8,8 @@ and evaluates prompts using a tree-based search approach.
 import json
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
-import time
 from tqdm import tqdm
 
 from .base import Generator, Evaluator, Dataset, Analyst
@@ -28,6 +27,7 @@ class PromptNode:
     children_ids: List[str] = None
     depth: int = 0
     generation: int = 0
+    iteration: int = 0  # Track when this node was created/evaluated
     evaluated: bool = False
     analysis_result: Optional[Dict[str, Any]] = None
     new_hypothesis: Optional[str] = None
@@ -128,7 +128,8 @@ class PromptOptimizer:
         self.best_score: float = -float('inf')
         self.baseline_score: float = -float('inf')  # Score of initial prompt
         self.failed_prompts: List[Dict[str, Any]] = []  # Track failed prompts
-        self.iterations: int = 0
+        self.iterations: int = 0  # Number of prompt evaluations completed
+        self.current_search_path: List[str] = []  # Track current DFS path
         
         # Initialize with root prompt
         if initial_prompt is None:
@@ -185,14 +186,12 @@ class PromptOptimizer:
         while (self.iterations < self.max_iterations and 
                self.current_node_id is not None):
             
-            self.iterations += 1
-            logger.info(f"Iteration {self.iterations}/{self.max_iterations}")
-            
             current_node = self.prompt_tree[self.current_node_id]
+            self._log_search_status(current_node)
             
             # Check if we've reached max depth
             if current_node.depth >= self.max_depth:
-                logger.info(f"Reached max depth {self.max_depth} at node {self.current_node_id}")
+                logger.info(f"🚫 Reached max depth {self.max_depth} at node {self.current_node_id}")
                 self.current_node_id = self._backtrack()
                 continue
             
@@ -211,7 +210,8 @@ class PromptOptimizer:
                     prompt=candidate,
                     parent_id=self.current_node_id,
                     depth=current_node.depth + 1,
-                    generation=current_node.generation + 1
+                    generation=current_node.generation + 1,
+                    iteration=self.iterations
                 )
                 
                 # Avoid duplicate prompts
@@ -220,13 +220,16 @@ class PromptOptimizer:
                     current_node.children_ids.append(child_node.node_id)
                     child_nodes.append(child_node)
             
-            # Evaluate candidates and find best
+            # Evaluate candidates one by one - stop at first one that beats parent (DFS)
             best_child = None
             best_child_score = -float('inf')
+            found_better_than_parent = False
             
-            for child_node in child_nodes:
+            for i, child_node in enumerate(child_nodes):
+                logger.info(f"🔍 Evaluating child {i+1}/{len(child_nodes)} at depth {child_node.depth}")
                 score = self._evaluate_prompt(child_node.node_id)
                 
+                # Track best among evaluated candidates so far
                 if score > best_child_score:
                     best_child_score = score
                     best_child = child_node
@@ -239,14 +242,28 @@ class PromptOptimizer:
                         'baseline_score': self.baseline_score,
                         'analysis': child_node.analysis_result
                     })
+                
+                # DFS: Stop at first child that beats parent
+                if score > current_node.score:
+                    logger.info(f"🎯 First child beats parent ({score:.4f} > {current_node.score:.4f}) - continuing DFS")
+                    found_better_than_parent = True
+                    break
+                else:
+                    logger.info(f"📊 Child doesn't beat parent ({score:.4f} <= {current_node.score:.4f}) - trying next candidate")
             
-            # Check if best child is better than current best
-            if best_child and best_child_score > self.best_score:
-                logger.info(f"Found better prompt with score {best_child_score:.4f}")
+            # Decide next node for DFS based on whether we found a child that beats parent
+            if best_child is None:
+                # No valid children, backtrack
+                logger.info("🔙 No valid children found, backtracking")
+                self.current_node_id = self._backtrack()
+            elif found_better_than_parent:
+                # Found child that beats parent - continue DFS down this path
+                logger.info(f"🌳 Continuing DFS from child that beats parent")
                 self.current_node_id = best_child.node_id
-                # Continue DFS from this node
+                self.current_search_path.append(best_child.node_id)
             else:
-                logger.info(f"No improvement found. Best child score: {best_child_score:.4f}")
+                # No child beats parent - backtrack to try next candidate
+                logger.info(f"🔙 No child beats parent, backtracking to try next candidate")
                 self.current_node_id = self._backtrack()
         
         logger.info("Optimization completed!")
@@ -373,7 +390,11 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
         if node.evaluated:
             return node.score
         
-        logger.info(f"Evaluating prompt: {node.prompt[:50]}...")
+        # Increment iteration counter for each evaluation
+        self.iterations += 1
+        node.iteration = self.iterations
+        
+        logger.info(f"🔍 Iteration {self.iterations}/{self.max_iterations}: Evaluating prompt: {node.prompt[:50]}...")
         
         try:
             # Get dataset inputs and references
@@ -427,7 +448,7 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
             if overall_score > self.best_score:
                 self.best_score = overall_score
                 self.best_prompt = node.prompt
-                logger.info(f"New best prompt found with score {overall_score:.4f}")
+                logger.info(f"🎆 New best prompt found with score {overall_score:.4f}")
             
             return overall_score
             
@@ -463,7 +484,7 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
             logger.error(f"Error updating parent hypotheses: {e}")
     
     def _backtrack(self) -> Optional[str]:
-        """Backtrack to find the next node to explore."""
+        """Backtrack to find the next node to explore using proper DFS traversal."""
         if self.current_node_id is None:
             return None
         
@@ -473,22 +494,74 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
         if current_node.parent_id:
             self._update_parent_hypotheses(current_node.parent_id)
         
-        # Go up the tree to find a node with unexplored children
-        while current_node.parent_id is not None:
-            parent = self.prompt_tree[current_node.parent_id]
+        # DFS backtracking: go up the tree to find a node with unexplored paths
+        visited_node = current_node
+        
+        while visited_node.parent_id is not None:
+            parent = self.prompt_tree[visited_node.parent_id]
             
-            # Find next unexplored child
+            # Check if parent has other unexplored children (siblings of current path)
             for child_id in parent.children_ids:
                 child = self.prompt_tree[child_id]
-                if not child.evaluated or len(child.children_ids) == 0:
-                    # Found potential node to explore
-                    if child.evaluated and child.depth < self.max_depth:
-                        return child_id
+                
+                # Found an evaluated child that hasn't been fully explored (no children yet)
+                # and is within depth limits
+                if (child.evaluated and 
+                    len(child.children_ids) == 0 and 
+                    child.depth < self.max_depth and
+                    child.node_id != visited_node.node_id):  # Not the path we came from
+                    logger.info(f"🔙 Backtracking to unexplored sibling: {child.node_id}")
+                    # Update search path
+                    try:
+                        parent_index = self.current_search_path.index(parent.node_id)
+                        self.current_search_path = self.current_search_path[:parent_index + 1]
+                        self.current_search_path.append(child.node_id)
+                    except ValueError:
+                        # Parent not in path, reconstruct from root
+                        self.current_search_path = [child.node_id]
+                    return child.node_id
             
-            current_node = parent
+            # No unexplored siblings, continue up the tree
+            visited_node = parent
         
-        # No more nodes to explore
+        # Exhausted all paths from root
+        logger.info("🏁 No more nodes to explore - DFS complete")
+        self.current_search_path = []
         return None
+    
+    def _log_search_status(self, current_node: PromptNode) -> None:
+        """Log current search status with tree visualization."""
+        logger.info(f"🌳 Search Status - Depth: {current_node.depth}, Best Score: {self.best_score:.4f}")
+        
+        # Show current search path
+        if self.current_search_path:
+            path_str = "🗺️ Current Path: "
+            for i, node_id in enumerate(self.current_search_path):
+                node = self.prompt_tree[node_id]
+                score_str = f"({node.score:.3f})" if node.score is not None else "(pending)"
+                marker = "📍" if node_id == self.current_node_id else "→"
+                path_str += f" {marker} D{node.depth}:{node.prompt[:20]}...{score_str}"
+            logger.info(path_str)
+        
+        # Show tree structure around current node
+        logger.info(f"🌲 Tree Structure around current node:")
+        self._log_tree_structure(self.current_node_id, max_depth=2)
+    
+    def _log_tree_structure(self, node_id: str, max_depth: int = 2, current_depth: int = 0, prefix: str = "") -> None:
+        """Log tree structure around a specific node."""
+        if current_depth > max_depth or node_id not in self.prompt_tree:
+            return
+        
+        node = self.prompt_tree[node_id]
+        score_str = f"({node.score:.3f})" if node.score is not None else "(pending)"
+        marker = "📍" if node_id == self.current_node_id else "•"
+        
+        logger.info(f"{prefix}{marker} D{node.depth}: {node.prompt[:30]}... {score_str}")
+        
+        # Show children
+        if node.children_ids and current_depth < max_depth:
+            for child_id in node.children_ids:
+                self._log_tree_structure(child_id, max_depth, current_depth + 1, prefix + "  ")
     
     def get_best_prompt(self) -> Tuple[str, float]:
         """Get the best prompt and score found so far."""
@@ -523,6 +596,7 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
                 'children_ids': node.children_ids,
                 'depth': node.depth,
                 'generation': node.generation,
+                'iteration': node.iteration,
                 'evaluated': node.evaluated,
                 'analysis_result': node.analysis_result,
                 'new_hypothesis': node.new_hypothesis,
@@ -574,6 +648,7 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
                 children_ids=node_data['children_ids'],
                 depth=node_data['depth'],
                 generation=node_data['generation'],
+                iteration=node_data.get('iteration', 0),  # Default to 0 for backwards compatibility
                 evaluated=node_data['evaluated'],
                 analysis_result=node_data.get('analysis_result'),
                 new_hypothesis=node_data.get('new_hypothesis'),
@@ -610,6 +685,7 @@ Provide only the prompts, one per line, numbered 1-{self.generation_size}:
                 hypothesis_str += f" [V:{len(node.verified_hypothesis)}]"
             if node.false_hypothesis:
                 hypothesis_str += f" [F:{len(node.false_hypothesis)}]"
-            print(f"{indent}- {node.prompt[:50]}... {score_str} {analysis_str}{hypothesis_str}")
+            iteration_str = f" [Iter:{node.iteration}]"
+            print(f"{indent}- {node.prompt[:50]}... {score_str} {analysis_str}{hypothesis_str}{iteration_str}")
         
         print(f"{'='*50}\n") 

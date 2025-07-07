@@ -26,7 +26,7 @@ class OpenAIGenerator(Generator):
     def __init__(self, model: str = "gpt-3.5-turbo", 
                  api_key: Optional[str] = None,
                  base_url: Optional[str] = None,
-                 max_tokens: int = 150,
+                 max_tokens: Optional[int] = None,
                  temperature: float = 0.7,
                  batch_size: int = 5):
         """

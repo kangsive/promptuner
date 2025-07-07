@@ -48,7 +48,7 @@ def main():
         model="gpt-4o-mini",
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.7,
-        max_tokens=150
+        max_tokens=1500,
     )
     
     # Initialize evaluator
@@ -79,7 +79,7 @@ def main():
         task_description="Generate concise and accurate summaries of given text",
         generation_size=3,
         max_depth=3,
-        max_iterations=5,
+        max_iterations=10,
         output_dir="outputs_with_analyst"
     )
     
